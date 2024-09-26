@@ -1,66 +1,33 @@
-import fetch from 'node-fetch';
 import { Ed25519Keypair } from '@mysten/sui/keypairs/ed25519';
 import { SuiClient, getFullnodeUrl } from '@mysten/sui/client';
 import { Transaction } from '@mysten/sui/transactions';
+import { fromB64, toB64 } from "@mysten/bcs";
+import { EnokiClient } from "@mysten/enoki";
 
-const ADMIN_CAP = ""; 
-const COUNTER = ""; 
-const PACKAGE_ID = ""; 
-const RECIPIENT = ""; 
-const TEST_MNEMONIC = "";
-const ALLOWED_ADDRESS = ""; 
+const ADMIN_CAP = "0xa491abdb6cfb5ffa43afede84d402c6e1c35fa68e49a3c44c8d88746ccafaf9e"; 
+const COUNTER = "0x8e81f7fecd2a5ef2bfe4814ac7f579f057d126dd53fb5446dfeaa33c2576bd72"; 
+const PACKAGE_ID = "0x7ce5eaea08274f06d7c2b5c38449e53488bcca68304a30cc42cd4c4caacb1e02"; 
+
+const RECIPIENT = "0x15414f44df059fb11946ce9f7b208730154c1ab6ba03f87a4fc6a422b85529d6"; // Receiving address
+
+const TEST_MNEMONIC = "scrub obvious pause step segment raw agent dilemma boil minor express average";
+const ALLOWED_ADDRESS = "0xf30f6eefbcc8583a3c5b82598d7cab5f3763b88fe4d7368c6635b4d8a6d3c8c1"; // Allowed address
 
 const ENOKI_API_BASE_URL = 'https://api.enoki.mystenlabs.com/v1';
-const ENOKI_API_KEY = '';
+const ENOKI_API_KEY = 'enoki_private_53afcc484a19748e74a71f592f609489';
 
-const toBase64 = (arrayBuffer) => Buffer.from(arrayBuffer).toString('base64');
+const suiClient = new SuiClient({ url: getFullnodeUrl('testnet') });
 
-const makeRequest = async (endpoint, method, body) => {
-    try {
-        const response = await fetch(`${ENOKI_API_BASE_URL}${endpoint}`, {
-            method,
-            headers: {
-                Authorization: `Bearer ${ENOKI_API_KEY}`,
-                'Content-Type': 'application/json',
-            },
-            body: body ? JSON.stringify(body) : undefined,
-        });
+const signer = Ed25519Keypair.deriveKeypairFromSeed(TEST_MNEMONIC);
 
-        const data = await response.json();
-        if (!response.ok) {
-            console.error(`Error: ${response.status} - ${response.statusText}`);
-            throw new Error(data?.message || 'Enoki API request failed');
-        }
+const enokiClient = new EnokiClient({
+    apiKey: ENOKI_API_KEY
+});
 
-        return data;
-    } catch (error) {
-        console.error('Error in Enoki API request:', error);
-        throw error;
-    }
-};
-
-const sponsorGasTransaction = async (transactionBlockKindBytes, sender) => {
-    try {
-        return await makeRequest('/transaction-blocks/sponsor', 'POST', {
-            network: 'testnet',
-            transactionBlockKindBytes,
-            sender,
-            allowedAddresses: [ALLOWED_ADDRESS, RECIPIENT],
-            allowedMoveCallTargets: [`${PACKAGE_ID}::stashed_airdrop::mint_and_transfer`],
-        });
-    } catch (error) {
-        console.error('Error in sponsoring gas transaction:', error);
-        throw error;
-    }
-};
 
 const mintAndTransfer = async () => {
     try {
-        const signer = Ed25519Keypair.deriveKeypair(TEST_MNEMONIC);
-        const suiClient = new SuiClient({ url: getFullnodeUrl('testnet') });
-
         const tx = new Transaction();
-        tx.setGasBudget(100000000);
         tx.moveCall({
             target: `${PACKAGE_ID}::stashed_airdrop::mint_and_transfer`,
             arguments: [
@@ -69,37 +36,36 @@ const mintAndTransfer = async () => {
                 tx.object(RECIPIENT),
             ],
         });
+
         const transactionBlockKindBytesArray = await tx.build({ client: suiClient, onlyTransactionKind: true });
-        const transactionBlockKindBytes = toBase64(transactionBlockKindBytesArray);
+        const transactionBlockKindBytes = toB64(transactionBlockKindBytesArray);
         console.log('Running sponsor request...');
-        const sponsorResponse = await sponsorGasTransaction(transactionBlockKindBytes, ALLOWED_ADDRESS);
+
+        const sponsorResponse = await enokiClient.createSponsoredTransaction({
+            network: 'testnet',
+            transactionKindBytes: transactionBlockKindBytes,
+            sender: ALLOWED_ADDRESS,
+            allowedAddresses: [ALLOWED_ADDRESS, RECIPIENT],
+            allowedMoveCallTargets: [`${PACKAGE_ID}::stashed_airdrop::mint_and_transfer`],
+        });
 
         if (!sponsorResponse) {
             throw new Error('Failed to sponsor gas transaction');
         }
 
-        const { bytes: sponsoredTransactionBytes, digest } = sponsorResponse.data;
-
-        if (!sponsoredTransactionBytes) {
-            console.error('Error: Sponsored transaction bytes are undefined');
-            throw new Error('Sponsored transaction bytes are undefined');
-        }
-
-        const sponsoredTransactionBuffer = Buffer.from(sponsoredTransactionBytes, 'base64');
-        console.log('Sponsored Transaction Buffer:', sponsoredTransactionBuffer);
-        const signedData = signer.signTransaction(sponsoredTransactionBuffer);
+        const signedData = await signer.signTransaction(fromB64(sponsorResponse.bytes));
 
         if (!signedData || !signedData.signature) {
             console.error('Error: Failed to sign the transaction or signature is undefined');
             throw new Error('Failed to sign the transaction or signature is undefined');
         }
 
-        console.log('Signature:', signedData.signature);
-        const executionResponse = await makeRequest(`/transaction-blocks/sponsor/${digest}`, 'POST', {
-            signature: Buffer.from(signedData.signature).toString('base64'),
+        const executionResponse = await enokiClient.executeSponsoredTransaction({
+            digest: sponsorResponse.digest, 
+            signature: signedData.signature,
         });
+        console.log('Execution Response:', executionResponse.digest);
 
-        console.log('Execution Response:', executionResponse);
     } catch (error) {
         console.error('Error during mint_and_transfer execution:', error);
     }
