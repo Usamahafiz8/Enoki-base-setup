@@ -14,11 +14,12 @@ const TEST_MNEMONIC = "scrub obvious pause step segment raw agent dilemma boil m
 const ALLOWED_ADDRESS = "0xf30f6eefbcc8583a3c5b82598d7cab5f3763b88fe4d7368c6635b4d8a6d3c8c1"; // Allowed address
 
 const ENOKI_API_BASE_URL = 'https://api.enoki.mystenlabs.com/v1';
-const ENOKI_API_KEY = 'enoki_private_53afcc484a19748e74a71f592f609489';
+const ENOKI_API_KEY = 'enoki_private_ce83f7fe2a5b61110bdf749b39e5c3ed';
 
 const suiClient = new SuiClient({ url: getFullnodeUrl('testnet') });
 
-const signer = Ed25519Keypair.deriveKeypairFromSeed(TEST_MNEMONIC);
+
+const signer = Ed25519Keypair.deriveKeypair(TEST_MNEMONIC);
 
 const enokiClient = new EnokiClient({
     apiKey: ENOKI_API_KEY
